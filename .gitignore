@@ -1,0 +1,6 @@
+# Gebaute Pakete gehen zu den Releases, nicht ins Repo.
+*.deb
+# Der Zwischenstand, aus dem mkdeb.py packt.
+stage/
+__pycache__/
+*.pyc

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=1.0
+Type=Application
+Name=Mastodon Feed
+Comment=Mastodon in der Ereignisansicht
+Icon=/usr/share/icons/hicolor/80x80/apps/mastodon-feed.png
+Exec=/usr/bin/python /opt/mastodon-feed/mastodon-feed
+Terminal=false
+Categories=Network;
+X-Osso-Type=application/x-executable

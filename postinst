@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+# mkdeb.py stamps every file with mtime 0 so packages are reproducible, which
+# means a .pyc left over from an earlier version always looks newer than the
+# .py just installed -- and Python then keeps running the old code. That cost
+# an afternoon once: the daemon kept reading /root/.config because a stale
+# config.pyc said so. Clearing them on install is the fix.
+rm -f /opt/mastodon-feed/*.pyc /opt/mastodon-feed/*.pyo
+
+# The job redirects into this before dropping to uid "user"; create it so the
+# first start does not fail on a missing file.
+touch /var/log/mastodon-feed.log
+chmod 644 /var/log/mastodon-feed.log
+exit 0

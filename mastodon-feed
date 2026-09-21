@@ -1,0 +1,262 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+"""Settings page for the Mastodon feed: pick an instance, sign in, done.
+
+The N9 browser is far too old for Mastodon's OAuth page, so there is no web
+step at all. The instance is asked for its own client credentials and then
+the password grant returns a token directly -- all of it in Python, none of
+it in a browser.
+
+PySide over Qt 4.7 and QtQuick 1.1, as BikeMe does on this device, so the
+package stays architecture-independent.
+"""
+import os
+import sys
+import threading
+import time
+
+reload(sys)
+sys.setdefaultencoding("utf-8")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from PySide.QtCore import QObject, QUrl, Slot, Signal, Property
+from PySide.QtGui import QApplication
+from PySide.QtDeclarative import QDeclarativeView
+
+import config
+import mastodon_api as api
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+LOG = os.path.join(config.DIR, "signin.log")
+
+
+def note(text):
+    """Every status line also goes to a file.
+
+    A message that only ever appears in a label is gone the moment the page
+    redraws, and then nobody can say what actually failed. The log holds no
+    credentials -- only what the instance answered.
+    """
+    try:
+        if not os.path.isdir(config.DIR):
+            os.makedirs(config.DIR, 0700)
+        with open(LOG, "a") as fh:
+            fh.write("%s  %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                                    text.replace("\n", " ")))
+    except (IOError, OSError):
+        pass
+
+
+class Account(QObject):
+    """Everything the QML talks to. The network runs on a worker thread so
+    the page keeps drawing; results come back through signals."""
+
+    changed = Signal()
+    statusChanged = Signal()
+    busyChanged = Signal()
+
+    def __init__(self, parent=None):
+        QObject.__init__(self, parent)
+        self._cfg = config.load()
+        self._status = ""
+        self._busy = False
+
+    def _get_instance(self):
+        return self._cfg.get("instance", "")
+
+    def _get_account(self):
+        return self._cfg.get("account", "")
+
+    def _get_connected(self):
+        return bool(self._cfg.get("token"))
+
+    def _get_home(self):
+        return bool(self._cfg.get("home", True))
+
+    def _get_mentions(self):
+        return bool(self._cfg.get("mentions", True))
+
+    def _get_avatars(self):
+        return bool(self._cfg.get("avatars", True))
+
+    def _get_images(self):
+        return bool(self._cfg.get("images", True))
+
+    def _get_status(self):
+        return self._status
+
+    def _get_busy(self):
+        return self._busy
+
+    instance = Property(unicode, _get_instance, notify=changed)
+    account = Property(unicode, _get_account, notify=changed)
+    connected = Property(bool, _get_connected, notify=changed)
+    home = Property(bool, _get_home, notify=changed)
+    mentions = Property(bool, _get_mentions, notify=changed)
+    avatars = Property(bool, _get_avatars, notify=changed)
+    images = Property(bool, _get_images, notify=changed)
+    status = Property(unicode, _get_status, notify=statusChanged)
+    busy = Property(bool, _get_busy, notify=busyChanged)
+
+    def _say(self, text):
+        self._status = text
+        note(text)
+        self.statusChanged.emit()
+
+    def _set_busy(self, value):
+        self._busy = value
+        self.busyChanged.emit()
+
+    @Slot(bool)
+    def setHome(self, value):
+        self._cfg["home"] = bool(value)
+        config.save(self._cfg)
+        self.changed.emit()
+
+    @Slot(bool)
+    def setMentions(self, value):
+        self._cfg["mentions"] = bool(value)
+        config.save(self._cfg)
+        self.changed.emit()
+
+    @Slot(bool)
+    def setAvatars(self, value):
+        self._cfg["avatars"] = bool(value)
+        config.save(self._cfg)
+        self.changed.emit()
+
+    @Slot(bool)
+    def setImages(self, value):
+        self._cfg["images"] = bool(value)
+        config.save(self._cfg)
+        self.changed.emit()
+
+    @Slot()
+    def signOut(self):
+        for key in ("token", "account", "last_home", "last_notification"):
+            self._cfg[key] = ""
+        config.save(self._cfg)
+        self._say(u"Abgemeldet.")
+        self.changed.emit()
+
+    @Slot(unicode, unicode)
+    def signInWithToken(self, instance, token):
+        """The route that works everywhere.
+
+        Mastodon 4 disables the password grant on most instances -- mastodon.nu
+        answers "the grant type is not allowed by the authorization server" --
+        so a token created in the instance's own settings is the reliable way
+        in, and the only one that also survives two-factor authentication.
+        """
+        if self._busy:
+            return
+        host = api.normalise_instance(instance)
+        token = (token or "").strip()
+        if not host:
+            self._say(u"Bitte eine Instanz angeben, z. B. mastodon.nu")
+            return
+        if not token:
+            self._say(u"Bitte das Zugriffstoken einfügen.")
+            return
+        self._set_busy(True)
+        self._say(u"Prüfe das Token bei %s …" % host)
+        thread = threading.Thread(target=self._token_worker, args=(host, token))
+        thread.daemon = True
+        thread.start()
+
+    def _token_worker(self, host, token):
+        try:
+            who = api.verify(host, token)
+            self._cfg["instance"] = host
+            self._cfg["token"] = token
+            self._cfg["account"] = who.get("acct") or u"?"
+            self._cfg["last_home"] = ""
+            self._cfg["last_notification"] = ""
+            config.save(self._cfg)
+            self._say(u"Angemeldet als @%s" % self._cfg["account"])
+        except api.MastodonError, exc:
+            message = unicode(exc)
+            if "401" in message or "invalid" in message.lower():
+                message += (u"\n\nDas Token passt nicht zu dieser Instanz oder "
+                            u"hat nicht das Recht \u201eread\u201c.")
+            self._say(message)
+        except Exception, exc:
+            self._say(unicode(exc))
+        finally:
+            self._set_busy(False)
+            self.changed.emit()
+
+    @Slot(unicode, unicode, unicode)
+    def signIn(self, instance, username, password):
+        if self._busy:
+            return
+        host = api.normalise_instance(instance)
+        if not host:
+            self._say(u"Bitte eine Instanz angeben, z. B. graz.social")
+            return
+        if not username or not password:
+            self._say(u"Benutzername und Passwort fehlen.")
+            return
+        self._set_busy(True)
+        self._say(u"Verbinde mit %s …" % host)
+        thread = threading.Thread(target=self._sign_in_worker,
+                                  args=(host, username, password))
+        thread.daemon = True
+        thread.start()
+
+    def _sign_in_worker(self, host, username, password):
+        try:
+            title = api.instance_title(host)
+            self._say(u"%s gefunden. Melde an …" % title)
+            client_id, client_secret = api.register_app(host)
+            token = api.password_token(host, client_id, client_secret,
+                                       username, password)
+            who = api.verify(host, token)
+            self._cfg["instance"] = host
+            self._cfg["token"] = token
+            self._cfg["account"] = who.get("acct") or username
+            # A fresh account starts from now; the whole back catalogue in the
+            # feed at once would be nobody's idea of useful.
+            self._cfg["last_home"] = ""
+            self._cfg["last_notification"] = ""
+            config.save(self._cfg)
+            self._say(u"Angemeldet als @%s" % self._cfg["account"])
+        except api.MastodonError, exc:
+            message = unicode(exc)
+            if ("invalid_grant" in message or "401" in message
+                    or "400" in message or "grant" in message.lower()):
+                message += (u"\n\nDiese Instanz erlaubt die Anmeldung mit "
+                            u"Passwort nicht. Nimm stattdessen ein "
+                            u"Zugriffstoken \u2014 das geht immer.")
+            self._say(message)
+        except Exception, exc:
+            self._say(unicode(exc))
+        finally:
+            self._set_busy(False)
+            self.changed.emit()
+
+
+def main():
+    app = QApplication(sys.argv)
+    QApplication.setOrganizationName("mastodon-feed")
+    QApplication.setApplicationName("mastodon-feed")
+
+    account = Account()
+
+    view = QDeclarativeView()
+    view.setResizeMode(QDeclarativeView.SizeRootObjectToView)
+    for path in ("/usr/lib/qt4/imports", "/usr/share/qt4/imports"):
+        view.engine().addImportPath(path)
+    view.rootContext().setContextProperty("account", account)
+    view.setSource(QUrl.fromLocalFile(os.path.join(ROOT, "qml", "main.qml")))
+    if view.status() == QDeclarativeView.Error:
+        for error in view.errors():
+            print "QML:", error.toString()
+        return 1
+    view.showFullScreen()
+    return app.exec_()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
