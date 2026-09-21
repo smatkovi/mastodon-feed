@@ -7,8 +7,18 @@ set -e
 # config.pyc said so. Clearing them on install is the fix.
 rm -f /opt/mastodon-feed/*.pyc /opt/mastodon-feed/*.pyo
 
-# The job redirects into this before dropping to uid "user"; create it so the
-# first start does not fail on a missing file.
-touch /var/log/mastodon-feed.log
-chmod 644 /var/log/mastodon-feed.log
+# Bis 0.8 schrieb ein Upstart-Job nach /var/log/mastodon-feed.log. Der Dienst
+# laeuft jetzt als "user" und schreibt sein Log selbst, neben das Konto:
+# ~/.config/mastodon-feed/feedd.log
+# Ein Fehlversuch aus der Entwicklung: eine Jobdatei unter /etc/init/xsession/
+# nimmt Aegis einem unsignierten Paket nicht ab ("no reference hash"), und der
+# Job laesst sich dann gar nicht erst laden. Falls noch eine herumliegt, weg
+# damit.
+rm -f /etc/init/xsession/mastodon-feed.conf
+
+# Der Job unter apps/ stoesst den Dienst nur noch an; neu laden und starten.
+initctl stop apps/mastodon-feed >/dev/null 2>&1 || true
+initctl reload-configuration >/dev/null 2>&1 || true
+initctl start apps/mastodon-feed >/dev/null 2>&1 || true
+
 exit 0

@@ -10,7 +10,7 @@ import os
 def _home():
     """The account always lives in the phone owner's home.
 
-    An Upstart job under /etc/init/apps starts with no HOME at all -- its
+    An Upstart job starts with no HOME at all -- its
     environment is UPSTART_JOB, TERM, PATH and PWD=/ and nothing else -- so
     expanduser("~") lands somewhere useless and the daemon then decides the
     account is not set up yet and sleeps for ever, silently. Hence the

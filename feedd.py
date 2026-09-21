@@ -21,6 +21,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 import mastodon_api as api
 
+# Der Dienst wird ueber den Sitzungs-D-Bus aktiviert und laeuft dadurch als
+# "user". Der Name wird beim Start beansprucht: damit gilt die Aktivierung als
+# abgeschlossen, und eine zweite Instanz beendet sich sofort wieder.
+BUS_NAME = "org.smatkovi.MastodonFeed"
+
 SOURCE = "mastodon-feed"
 DISPLAY = "Mastodon"
 ICON = "icon-m-content-description"
@@ -249,12 +254,68 @@ def poll_once(cfg, iface):
     return cfg
 
 
+def open_log():
+    """Eigenes Log statt einer Umleitung im Upstart-Job.
+
+    Als D-Bus-Dienst gibt es keine Umleitung mehr, die jemand fuer uns
+    einrichtet -- und /var/log gehoert root, wir laufen als "user". Das Log
+    liegt deshalb neben dem Konto und wird gekappt, bevor es die kleine
+    Home-Partition fuellt.
+    """
+    path = os.path.join(config.DIR, "feedd.log")
+    try:
+        if not os.path.isdir(config.DIR):
+            os.makedirs(config.DIR, 0700)
+        if os.path.exists(path) and os.path.getsize(path) > 256 * 1024:
+            os.rename(path, path + ".1")
+        handle = open(path, "a", 0)
+        os.dup2(handle.fileno(), 1)
+        os.dup2(handle.fileno(), 2)
+    except (IOError, OSError):
+        pass          # ohne Log weiterlaufen ist besser als gar nicht laufen
+
+
+def claim_name():
+    """True, wenn dieser Prozess der Dienst ist; False, wenn schon einer laeuft.
+
+    Der Umweg ueber den Sitzungsbus ist nicht Geschmackssache: ein Upstart-Job
+    unter /etc/init/apps laeuft als uid 0 mit leerem Rechtesatz und kann die
+    Kennung nicht wechseln -- aegis-exec landet dort auf nobody, su scheitert
+    an "can't set groups", und weder nobody noch dieser root darf
+    ~/.config/mastodon-feed/account.json lesen. Ein ueber den Sitzungsbus
+    aktivierter Dienst dagegen laeuft als Besitzer des Busses, also als "user",
+    mit HOME und Zugriff auf das Konto.
+    """
+    import dbus
+    bus = dbus.SessionBus()
+    reply = bus.request_name(BUS_NAME, dbus.bus.NAME_FLAG_DO_NOT_QUEUE)
+    return reply == dbus.bus.REQUEST_NAME_REPLY_PRIMARY_OWNER
+
+
 def main():
+    open_log()
+    try:
+        if not claim_name():
+            print "mastodon-feed: laeuft bereits, dieser Start endet hier"
+            return
+    except Exception, e:
+        # Ohne Sitzungsbus gibt es ohnehin keinen Feed, in den geschrieben
+        # werden koennte -- aber sagen statt schweigen.
+        print "mastodon-feed: kein Sitzungsbus:", e
+        return
+
+    print "mastodon-feed: gestartet %s als uid %d" % (
+        time.strftime("%Y-%m-%d %H:%M:%S"), os.getuid())
+    sys.stdout.flush()
     while True:
         cfg = config.load()
         if not cfg["instance"] or not cfg["token"]:
             # Not set up yet. Sleep rather than exit: the settings page may
             # fill this in at any moment and respawning a dead job is noisier.
+            # Gesagt wird es trotzdem: genau dieser Zustand sah frueher wie ein
+            # stiller Stillstand aus, weil er nichts ins Log schrieb.
+            print "mastodon-feed: kein Konto eingerichtet, warte"
+            sys.stdout.flush()
             time.sleep(60)
             continue
         try:
