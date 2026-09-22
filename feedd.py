@@ -202,14 +202,18 @@ def add(iface, title, body, footer, when, url, icon=ICON, images=(), video=False
     return int(iface.addItem(item))
 
 
-def status_item(iface, status, footer, budget, cfg):
+def status_item_raw(iface, status, footer, budget, cfg):
     account = status.get("account") or {}
     who = account.get("display_name") or account.get("acct") or "?"
     body = plain(status.get("content") or "")
     shown = status
     if status.get("reblog"):
         inner = status["reblog"]
-        who = "%s \xe2\x86\xbb %s" % (who, (inner.get("account") or {}).get("acct", "?"))
+        # u"..." here is not taste, it is required. As a byte string,
+        # "\xe2\x86\xbb" makes Python 2 decode it as ASCII the moment the name
+        # beside it is unicode -- and out of the JSON it always is. That threw
+        # the whole round the first time a boost appeared in the timeline.
+        who = u"%s ↻ %s" % (who, (inner.get("account") or {}).get("acct", "?"))
         body = plain(inner.get("content") or "")
         shown = inner
     if not body:
@@ -227,6 +231,21 @@ def status_item(iface, status, footer, budget, cfg):
     return add(iface, who, body, footer,
                status.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                status.get("url") or "", icon, images, video)
+
+
+def status_item(iface, status, footer, budget, cfg):
+    """One post, and a broken one does not take the rest down with it.
+
+    A single post the code could not digest used to abort the whole round --
+    and since "last_home" only moves on AFTER the loop, the next poll fetched
+    the same posts and tripped over the same one. The marker never advanced
+    and nothing arrived again, ever. Better to lose one post than all of them.
+    """
+    try:
+        return status_item_raw(iface, status, footer, budget, cfg)
+    except Exception, exc:
+        print "post skipped (%s): %s" % (status.get("id"), exc)
+        return 0
 
 
 def poll_once(cfg, iface):
