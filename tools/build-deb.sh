@@ -11,12 +11,23 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$HERE"
 VERSION=${1:-$(sed -n 's/^Version: *//p' control | head -1)}
 STAGE=$HERE/stage
+
+# Seit 2.0 ist der Dienst ein Rust-Binary und das Paket damit nicht mehr
+# architekturunabhaengig. Gebaut wird es mit tools/build-daemon.sh auf dem
+# Arch-Rechner; hier wird es nur eingepackt.
+[ -x "$HERE/build/mastodon-feedd" ] ||
+    { echo "build/mastodon-feedd fehlt -- erst tools/build-daemon.sh" >&2; exit 1; }
 rm -rf "$STAGE"
 mkdir -p "$STAGE/DEBIAN" "$STAGE/opt/mastodon-feed/qml" \
          "$STAGE/usr/share/applications" "$STAGE/usr/share/dbus-1/services" \
          "$STAGE/etc/init/apps" "$STAGE/usr/share/icons/hicolor/80x80/apps"
 
-for f in feedd.py mastodon_api.py https_helper.py config.py mastodon-feed; do
+# Der Dienst.
+cp "$HERE/build/mastodon-feedd" "$STAGE/opt/mastodon-feed/"
+chmod 755 "$STAGE/opt/mastodon-feed/mastodon-feedd"
+# Und die Einstellungsseite, die weiter Python ist: PySide zeichnet sie, und
+# fuer die Anmeldung braucht sie den TLS-Helfer.
+for f in mastodon_api.py https_helper.py config.py mastodon-feed; do
     cp "$f" "$STAGE/opt/mastodon-feed/$f"
 done
 chmod 755 "$STAGE/opt/mastodon-feed/mastodon-feed"
@@ -46,6 +57,6 @@ zeilen += [" " + z for z in textwrap.wrap(b64, 76)]
 open("stage/DEBIAN/control", "w").write("\n".join(zeilen) + "\n")
 PY
 
-OUT="$HERE/mastodon-feed_${VERSION}_all.deb"
+OUT="$HERE/mastodon-feed_${VERSION}_armel.deb"
 python3 mkdeb.py "$STAGE" "$OUT"
 echo "== $OUT"

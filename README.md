@@ -4,7 +4,8 @@ Puts the home timeline and the mentions of a Mastodon account into the
 **Events view** — the feed on the home screen, where the built-in Twitter
 and Facebook feeds once lived before those services turned their APIs off.
 
-Ships as an architecture-independent `.deb`.
+Ships as an `armel` `.deb`: the daemon is a static Rust binary, the settings
+page is still Python.
 
 ## Why this is not just an API client
 
@@ -19,22 +20,49 @@ a token through the **password grant**. All of it in Python, none of it in a
 browser.
 
 **Harmattan's Python cannot reach any instance.** It is 2.6 against OpenSSL
-0.9.8, and every Mastodon instance requires TLS 1.2. The device may carry a
-newer Python beside it — `/opt/wunderw/bin/python3` on this N950, OpenSSL
-1.1.1w — and that one gets through. So the Python 2 side never speaks TLS
-itself: it shells out to `https_helper.py`, which runs under whatever Python 3
-is present and always answers with one JSON object, so the caller never has
-to tell a crash from a 404. Without such a Python the application says so
-instead of failing quietly.
+0.9.8, and every Mastodon instance requires TLS 1.2. That is why the daemon
+is Rust now (see below) — it speaks TLS itself. The settings page is still
+Python and still cannot, so signing in shells out to `https_helper.py`, which
+runs under whatever newer Python 3 the device carries
+(`/opt/wunderw/bin/python3` on this N950, OpenSSL 1.1.1w) and always answers
+with one JSON object, so the caller never has to tell a crash from a 404.
+Without such a Python, signing in says so instead of failing quietly.
+
+## The daemon is Rust (2.0)
+
+`daemon/` holds it: one static binary against musl, so Harmattan's glibc 2.10
+does not come into it, and rustls for TLS with its own root certificates —
+the device's certificate store is from 2011 and does not know today's
+issuers. A poll of an instance now takes half a second on the N950 instead of
+spawning a second Python interpreter per request.
+
+The daemon keeps every constraint of the Python one, because they come from
+the device and not from the language: it is started through the **session**
+D-Bus so that it runs as `user`, it writes only the two markers back into
+`account.json` (the settings page owns the rest), and its item dictionary
+carries the full set of keys with exactly the types the Events view expects.
+
+Built with `tools/build-daemon.sh`, which cross-compiles on the Arch machine
+(`armv7-unknown-linux-musleabi`, `rust-lld` as the linker — see
+`tools/cross.env`); `tools/build-deb.sh` then packs it. Two switches help
+when something is wrong on the device itself: `--probe <instance>` fetches an
+instance's name, which proves TLS and name resolution without an account, and
+`--eintrag <file.json>` puts one post from a JSON file into the Events view,
+which proves the session bus and the item dictionary.
 
 ## Layout
 
 | File | Purpose |
 | --- | --- |
-| `feedd.py` | The daemon. Polls the timeline and the notifications and hands each new item to `com.nokia.home.EventFeed` over D-Bus. |
-| `mastodon_api.py` | The Mastodon calls: app registration, password grant, timeline, notifications. Every request goes through the helper. |
-| `https_helper.py` | `GET` / `POST` / `FETCH` under a newer Python 3. The only place that touches TLS. |
-| `mastodon-feed` | The settings page: instance, sign-in, the switches. PySide over Qt 4.7 and QtQuick 1.1, as BikeMe does on this device, so the package stays `all`. |
+| `daemon/src/main.rs` | The daemon. Polls the timeline and the notifications and hands each new item to `com.nokia.home.EventFeed` over D-Bus. |
+| `daemon/src/mastodon.rs` | The Mastodon calls, over rustls — timeline, notifications, pictures. |
+| `daemon/src/feed.rs` | The Events view: session bus, the bus name, the item dictionary. |
+| `daemon/src/text.rs` | HTML to one line of text, and the link a post points at. |
+| `daemon/src/bilder.rs` | Pictures: the per-poll budget, the cache and its pruning. |
+| `daemon/src/einstellungen.rs` | `account.json` — read whole, written one key at a time. |
+| `mastodon_api.py` | The Mastodon calls of the *settings page*: app registration, password grant, sign-in. Goes through the helper. |
+| `https_helper.py` | `GET` / `POST` / `FETCH` under a newer Python 3. All that is left of the TLS crutch, and only for signing in. |
+| `mastodon-feed` | The settings page: instance, sign-in, the switches. PySide over Qt 4.7 and QtQuick 1.1, as BikeMe does on this device. |
 | `config.py` | Where the account lives: `~/.config/mastodon-feed/account.json`, mode 0600 — it holds the token. |
 | `mastodon-feed.conf` | The Upstart job — a trigger and watchdog, not the daemon itself; see below. |
 | `org.smatkovi.MastodonFeed.service` | The session D-Bus service that actually starts the daemon, as `user`. |
@@ -136,7 +164,7 @@ readable. And `/usr/share/dbus-1/services/` is open to third-party packages
 (several other apps on this phone install there). So:
 
 * `org.smatkovi.MastodonFeed.service` declares the daemon as a session
-  service, and `feedd.py` claims that bus name on start — which also means a
+  service, and the daemon claims that bus name on start — which also means a
   second copy exits instead of polling twice.
 * The Upstart job under `/etc/init/apps/` no longer *runs* the daemon. It
   waits for the session bus, asks the bus to start the service, and then
@@ -152,14 +180,23 @@ rotation) and says on every start which uid it is running as.
 
 `com.nokia.home.EventFeed.addItem` answers `-1` and says nothing at all if a
 single key is missing from the dictionary. Nothing appears in the feed, and
-there is no error anywhere to explain it. The full key set in `feedd.py` is
-not decoration.
+there is no error anywhere to explain it. The full key set in
+`daemon/src/feed.rs` is not decoration, and neither are its types: the
+timestamp goes over as a string, `video` as a boolean, `imageList` as an
+array of strings.
+
+Since 2.0 the daemon also notices when it has been replaced: it compares the
+inode behind its own path every minute and ends when `dpkg` has swapped it.
+Without that, a new version would not reach the running service at all — the
+Upstart job does not start it, it only checks whether somebody holds the bus
+name, and from `postinst` Aegis refuses to kill the old process ("Operation
+not permitted"), while the same `kill` over `sudo` goes through.
 
 ## Installing
 
 Developer mode, then in a terminal or over SSH:
 
-    devel-su dpkg -i mastodon-feed_0.9_all.deb
+    devel-su dpkg -i mastodon-feed_2.0_armel.deb
 
 Then open **Mastodon Feed** from the launcher, give it the instance and the
 credentials, and the posts appear in the Events view. The token is stored

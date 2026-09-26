@@ -4,3 +4,5 @@
 stage/
 __pycache__/
 *.pyc
+build/
+daemon/target/
