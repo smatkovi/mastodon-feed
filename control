@@ -1,5 +1,5 @@
 Package: mastodon-feed
-Version: 1.1
+Version: 1.3
 Architecture: all
 Maintainer: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Depends: python, python-dbus, python-pyside.qtcore, python-pyside.qtgui, python-pyside.qtdeclarative, qt-components

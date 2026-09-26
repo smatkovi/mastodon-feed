@@ -137,64 +137,21 @@ PageStackWindow {
                     spacing: 10
                     visible: account.connected
 
+                    // Der Hauptschalter. Aus heisst: es wird nichts mehr
+                    // geholt -- kein Abruf, keine Bilder, kein Datenverkehr.
+                    // Der Dienst laeuft weiter und merkt das Einschalten
+                    // innerhalb einer Minute von selbst.
                     Row {
                         x: 16
                         spacing: 12
                         Switch {
-                            // Set once and written back only on a real change:
-                            // binding checked to the account and assigning to
-                            // the account from checked is a loop.
-                            Component.onCompleted: checked = account.home
-                            onCheckedChanged: if (checked !== account.home) account.setHome(checked)
+                            id: hauptschalter
+                            Component.onCompleted: checked = account.enabled
+                            onCheckedChanged: if (checked !== account.enabled) account.setEnabled(checked)
                         }
                         Label {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "Startseite im Feed"
-                            font.pixelSize: 20
-                        }
-                    }
-
-                    Row {
-                        x: 16
-                        spacing: 12
-                        Switch {
-                            // Set once and written back only on a real change:
-                            // binding checked to the account and assigning to
-                            // the account from checked is a loop.
-                            Component.onCompleted: checked = account.mentions
-                            onCheckedChanged: if (checked !== account.mentions) account.setMentions(checked)
-                        }
-                        Label {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "Erwähnungen im Feed"
-                            font.pixelSize: 20
-                        }
-                    }
-
-                    Row {
-                        x: 16
-                        spacing: 12
-                        Switch {
-                            Component.onCompleted: checked = account.avatars
-                            onCheckedChanged: if (checked !== account.avatars) account.setAvatars(checked)
-                        }
-                        Label {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "Profilbilder laden"
-                            font.pixelSize: 20
-                        }
-                    }
-
-                    Row {
-                        x: 16
-                        spacing: 12
-                        Switch {
-                            Component.onCompleted: checked = account.images
-                            onCheckedChanged: if (checked !== account.images) account.setImages(checked)
-                        }
-                        Label {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "Bilder laden"
+                            text: "Feed laden"
                             font.pixelSize: 20
                         }
                     }
@@ -203,11 +160,92 @@ PageStackWindow {
                         x: 16
                         width: parent.width - 32
                         wrapMode: Text.WordWrap
+                        visible: !hauptschalter.checked
                         font.pixelSize: 16
                         color: "#909090"
-                        text: "Beides aus lässt der Feed rein aus Text bestehen \u2014 "
-                              + "auf 2G die schnellste Einstellung. Geladen werden nur "
-                              + "Vorschaubilder, nie die Bilder in voller Größe."
+                        text: "Aus: es wird nichts mehr geholt. Was schon im "
+                              + "Feed steht, bleibt stehen; die Anmeldung bleibt bestehen."
+                    }
+
+                    // Alles Weitere betrifft nur den eingeschalteten Feed.
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        enabled: hauptschalter.checked
+                        opacity: hauptschalter.checked ? 1.0 : 0.4
+
+                        Row {
+                            x: 16
+                            spacing: 12
+                            Switch {
+                                // Set once and written back only on a real change:
+                                // binding checked to the account and assigning to
+                                // the account from checked is a loop.
+                                Component.onCompleted: checked = account.home
+                                onCheckedChanged: if (checked !== account.home) account.setHome(checked)
+                            }
+                            Label {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Startseite im Feed"
+                                font.pixelSize: 20
+                            }
+                        }
+
+                        Row {
+                            x: 16
+                            spacing: 12
+                            Switch {
+                                // Set once and written back only on a real change:
+                                // binding checked to the account and assigning to
+                                // the account from checked is a loop.
+                                Component.onCompleted: checked = account.mentions
+                                onCheckedChanged: if (checked !== account.mentions) account.setMentions(checked)
+                            }
+                            Label {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Erwähnungen im Feed"
+                                font.pixelSize: 20
+                            }
+                        }
+
+                        Row {
+                            x: 16
+                            spacing: 12
+                            Switch {
+                                Component.onCompleted: checked = account.avatars
+                                onCheckedChanged: if (checked !== account.avatars) account.setAvatars(checked)
+                            }
+                            Label {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Profilbilder laden"
+                                font.pixelSize: 20
+                            }
+                        }
+
+                        Row {
+                            x: 16
+                            spacing: 12
+                            Switch {
+                                Component.onCompleted: checked = account.images
+                                onCheckedChanged: if (checked !== account.images) account.setImages(checked)
+                            }
+                            Label {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Bilder laden"
+                                font.pixelSize: 20
+                            }
+                        }
+
+                        Label {
+                            x: 16
+                            width: parent.width - 32
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 16
+                            color: "#909090"
+                            text: "Beides aus lässt der Feed rein aus Text bestehen \u2014 "
+                                  + "auf 2G die schnellste Einstellung. Geladen werden nur "
+                                  + "Vorschaubilder, nie die Bilder in voller Größe."
+                        }
                     }
 
                     Button {

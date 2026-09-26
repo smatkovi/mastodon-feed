@@ -16,6 +16,22 @@ rm -f /opt/mastodon-feed/*.pyc /opt/mastodon-feed/*.pyo
 # damit.
 rm -f /etc/init/xsession/mastodon-feed.conf
 
+# Den laufenden Dienst beenden, sonst laeuft nach dem Update weiter der alte
+# Code. Der Upstart-Job startet feedd.py naemlich nicht selbst -- er sieht nur
+# nach, ob jemand org.smatkovi.MastodonFeed haelt, und der alte Prozess haelt
+# den Namen weiter. Ohne das hier wirkt eine neue Fassung erst nach einem
+# Neustart des Geraets. "pkill -f" waere hier zwar ungefaehrlich (in der
+# eigenen Befehlszeile steht feedd.py nicht), aber ps und kill gibt es
+# sicher, pkill nicht auf jedem Geraet.
+# Unter aegis geht das oft daneben, ohne ein Wort zu sagen -- deshalb sagt es
+# diese Schleife, und deshalb loest sich der Dienst zusaetzlich selbst ab:
+# feedd.py sieht jede Minute die Zeitstempel seiner eigenen Dateien an und
+# endet, sobald sie sich geaendert haben. Spaetestens fuenf Minuten spaeter
+# aktiviert der Job die neue Fassung.
+for pid in $(ps ax 2>/dev/null | grep "[f]eedd\.py" | awk '{print $1}'); do
+    kill "$pid" || echo "mastodon-feed: $pid liess sich nicht beenden -- der Dienst loest sich selbst ab"
+done
+
 # Der Job unter apps/ stoesst den Dienst nur noch an; neu laden und starten.
 initctl stop apps/mastodon-feed >/dev/null 2>&1 || true
 initctl reload-configuration >/dev/null 2>&1 || true

@@ -71,6 +71,9 @@ class Account(QObject):
     def _get_connected(self):
         return bool(self._cfg.get("token"))
 
+    def _get_enabled(self):
+        return bool(self._cfg.get("enabled", True))
+
     def _get_home(self):
         return bool(self._cfg.get("home", True))
 
@@ -92,6 +95,7 @@ class Account(QObject):
     instance = Property(unicode, _get_instance, notify=changed)
     account = Property(unicode, _get_account, notify=changed)
     connected = Property(bool, _get_connected, notify=changed)
+    enabled = Property(bool, _get_enabled, notify=changed)
     home = Property(bool, _get_home, notify=changed)
     mentions = Property(bool, _get_mentions, notify=changed)
     avatars = Property(bool, _get_avatars, notify=changed)
@@ -108,35 +112,47 @@ class Account(QObject):
         self._busy = value
         self.busyChanged.emit()
 
+    def _umlegen(self, schluessel, value):
+        """Einen Schalter setzen -- einzeln, nicht die ganze Kopie schreiben.
+
+        Der Dienst laeuft nebenher und rueckt waehrend eines Abrufs die Marken
+        last_home/last_notification vor. Diese Seite haelt ihre Kopie seit dem
+        Start; sie ganz zurueckzuschreiben wuerde die Marken auf den alten
+        Stand zuruecksetzen, und der naechste Abruf holte dieselben Beitraege
+        noch einmal in den Feed.
+        """
+        self._cfg = config.update(**{schluessel: bool(value)})
+        self.changed.emit()
+
+    @Slot(bool)
+    def setEnabled(self, value):
+        """Der Hauptschalter. Aus heisst: der Dienst holt nichts mehr.
+
+        Er wird dafuer nicht beendet -- er sieht jede Minute nach und faengt
+        beim Einschalten von selbst wieder an.
+        """
+        self._umlegen("enabled", value)
+
     @Slot(bool)
     def setHome(self, value):
-        self._cfg["home"] = bool(value)
-        config.save(self._cfg)
-        self.changed.emit()
+        self._umlegen("home", value)
 
     @Slot(bool)
     def setMentions(self, value):
-        self._cfg["mentions"] = bool(value)
-        config.save(self._cfg)
-        self.changed.emit()
+        self._umlegen("mentions", value)
 
     @Slot(bool)
     def setAvatars(self, value):
-        self._cfg["avatars"] = bool(value)
-        config.save(self._cfg)
-        self.changed.emit()
+        self._umlegen("avatars", value)
 
     @Slot(bool)
     def setImages(self, value):
-        self._cfg["images"] = bool(value)
-        config.save(self._cfg)
-        self.changed.emit()
+        self._umlegen("images", value)
 
     @Slot()
     def signOut(self):
-        for key in ("token", "account", "last_home", "last_notification"):
-            self._cfg[key] = ""
-        config.save(self._cfg)
+        self._cfg = config.update(token="", account="",
+                                  last_home="", last_notification="")
         self._say(u"Abgemeldet.")
         self.changed.emit()
 
@@ -168,12 +184,9 @@ class Account(QObject):
     def _token_worker(self, host, token):
         try:
             who = api.verify(host, token)
-            self._cfg["instance"] = host
-            self._cfg["token"] = token
-            self._cfg["account"] = who.get("acct") or u"?"
-            self._cfg["last_home"] = ""
-            self._cfg["last_notification"] = ""
-            config.save(self._cfg)
+            self._cfg = config.update(instance=host, token=token,
+                                      account=who.get("acct") or u"?",
+                                      last_home="", last_notification="")
             self._say(u"Angemeldet als @%s" % self._cfg["account"])
         except api.MastodonError, exc:
             message = unicode(exc)
@@ -213,14 +226,11 @@ class Account(QObject):
             token = api.password_token(host, client_id, client_secret,
                                        username, password)
             who = api.verify(host, token)
-            self._cfg["instance"] = host
-            self._cfg["token"] = token
-            self._cfg["account"] = who.get("acct") or username
             # A fresh account starts from now; the whole back catalogue in the
             # feed at once would be nobody's idea of useful.
-            self._cfg["last_home"] = ""
-            self._cfg["last_notification"] = ""
-            config.save(self._cfg)
+            self._cfg = config.update(instance=host, token=token,
+                                      account=who.get("acct") or username,
+                                      last_home="", last_notification="")
             self._say(u"Angemeldet als @%s" % self._cfg["account"])
         except api.MastodonError, exc:
             message = unicode(exc)

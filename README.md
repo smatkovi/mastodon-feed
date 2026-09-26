@@ -40,6 +40,44 @@ instead of failing quietly.
 | `org.smatkovi.MastodonFeed.service` | The session D-Bus service that actually starts the daemon, as `user`. |
 | `mkdeb.py` | Writes the `.deb` without dpkg. |
 
+## Tapping an item opens its link
+
+A feed item's `action` field is an address: MeeGo Touch Home hands it to
+`ContentAction::Action::defaultActionForScheme` when the item is tapped, and
+`browser.desktop` has registered itself for `x-maemo-urischeme/http` and
+`…/https`. So putting the post's link there is all it takes — no service of
+our own, no desktop file.
+
+Which link: Mastodon's own preview card if the post has one (`card.url`,
+that is the instance saying "this post points at something"), otherwise the
+first `<a href>` in the post's HTML. Mentions and hashtags are skipped —
+Mastodon marks them `class="u-url mention"` and `class="mention hashtag"`,
+and they only lead to a profile or a tag page that this browser cannot render
+anyway. `&amp;` in the href is translated back, or the query string arrives
+broken. A boost uses the boosted post's link, the one whose text is shown.
+
+A post without a link leaves `action` empty, and then the item does not react
+to a tap — same as before. The post's own permalink would be the obvious
+fallback, but a Mastodon status page is not something the 2011 browser makes
+a good job of.
+
+## Switching the feed off
+
+**Feed laden** is the master switch on the settings page. Off means the daemon
+fetches nothing at all — no poll, no pictures, no traffic — while the account
+stays signed in and whatever is already in the Events view stays there. The
+daemon is not stopped for it: it keeps looking every minute, so switching the
+feed back on takes effect within a minute and needs no restart.
+
+Two details that are not decoration. The daemon checks the switch again every
+60 seconds *while it waits out the poll interval* — otherwise switching off on
+2G would still allow one more ten-minute poll, which is exactly the moment
+somebody reaches for the switch. And both sides write single keys through
+`config.update()` rather than saving their whole copy of the config: a poll
+takes minutes on 2G, and a settings page that wrote back its startup snapshot
+would undo the markers the daemon had just advanced — the next poll would then
+put the same posts in the feed a second time.
+
 ## Data, and switching pictures off
 
 The N950 is often on 2G, so pictures are not all-or-nothing:

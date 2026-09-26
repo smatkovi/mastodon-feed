@@ -26,7 +26,7 @@ import mastodon_api as api
 # abgeschlossen, und eine zweite Instanz beendet sich sofort wieder.
 BUS_NAME = "org.smatkovi.MastodonFeed"
 
-SOURCE = "mastodon-feed"
+SOURCE = "mastodon-feed"   # Quellname im Feed
 DISPLAY = "Mastodon"
 ICON = "icon-m-content-description"
 
@@ -42,6 +42,54 @@ def plain(html):
     for entity, char in ENTITIES:
         text = text.replace(entity, char)
     return text.strip()
+
+
+A_TAG = re.compile(r"<a\s([^>]*)>", re.I)
+HREF = re.compile(r'href="([^"]*)"', re.I)
+KLASSE = re.compile(r'class="([^"]*)"', re.I)
+
+
+def entschaerft(url):
+    """&amp; und Freunde zurueckuebersetzen -- im href stehen sie escaped."""
+    for entity, char in ENTITIES:
+        url = url.replace(entity, char)
+    return url
+
+
+def linkziel(status, host=""):
+    """Der Link, auf den ein Beitrag zeigt -- oder "" fuer keinen.
+
+    Das Feld "action" eines Feed-Eintrags ist fuer die Ereignisansicht eine
+    Adresse: beim Tippen ruft sie ContentAction dafuer auf, und der Browser
+    hat sich fuer http und https eingetragen (x-maemo-urischeme/http in
+    browser.desktop). Leer heisst: tippen tut nichts, so wie bisher.
+
+    Zuerst die Vorschaukarte -- das ist Mastodons eigene Auskunft „dieser
+    Beitrag zeigt auf etwas". Sonst der erste Link im Text, aber ohne
+    Erwaehnungen und Schlagwoerter: die traegt Mastodon als <a> mit der Klasse
+    "mention" bzw. "hashtag" ein und sie fuehren nur auf ein Profil oder eine
+    Schlagwortseite, die der alte Browser ohnehin nicht darstellt.
+    """
+    karte = status.get("card") or {}
+    if karte.get("url"):
+        return entschaerft(karte["url"])
+    for attrs in A_TAG.findall(status.get("content") or ""):
+        adresse = HREF.search(attrs)
+        if not adresse:
+            continue
+        klassen = KLASSE.search(attrs)
+        klassen = klassen.group(1) if klassen else ""
+        if "mention" in klassen or "hashtag" in klassen:
+            continue
+        url = entschaerft(adresse.group(1))
+        # Guertel und Hosentraeger, falls die Klasse einmal fehlt: auf der
+        # eigenen Instanz sind /@jemand und /tags/… genau diese beiden Faelle.
+        if host and (u"//%s/@" % host) in url:
+            continue
+        if u"/tags/" in url:
+            continue
+        return url
+    return ""
 
 
 SESSION_BUS_FILE = "/tmp/session_bus_address.user"
@@ -185,7 +233,9 @@ def attachments(status, budget, want_images):
     return paths, video
 
 
-def add(iface, title, body, footer, when, url, icon=ICON, images=(), video=False):
+def add(iface, title, body, footer, when, ziel, icon=ICON, images=(), video=False):
+    """Ein Eintrag in der Ereignisansicht. "ziel" ist die Adresse, die beim
+    Tippen geoeffnet wird; leer heisst, der Eintrag reagiert nicht."""
     import dbus
     item = dbus.Dictionary({
         "icon": dbus.String(icon),
@@ -195,7 +245,7 @@ def add(iface, title, body, footer, when, url, icon=ICON, images=(), video=False
         "timestamp": dbus.String(when),
         "footer": dbus.String(footer),
         "video": dbus.Boolean(video),
-        "action": dbus.String(""),
+        "action": dbus.String(ziel),
         "sourceName": dbus.String(SOURCE),
         "sourceDisplayName": dbus.String(DISPLAY),
     }, signature="sv")
@@ -228,9 +278,15 @@ def status_item_raw(iface, status, footer, budget, cfg):
 
     images, video = attachments(shown, budget, cfg.get("images"))
 
+    # Beim Tippen wird der Link geoeffnet, den der Beitrag enthaelt. Bei einem
+    # geteilten Beitrag der des geteilten -- "shown" ist der, dessen Text auch
+    # angezeigt wird. Hat er keinen, bleibt das Feld leer und der Eintrag
+    # reagiert nicht aufs Tippen.
+    ziel = linkziel(shown, cfg.get("instance", ""))
+
     return add(iface, who, body, footer,
                status.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               status.get("url") or "", icon, images, video)
+               ziel, icon, images, video)
 
 
 def status_item(iface, status, footer, budget, cfg):
@@ -311,6 +367,64 @@ def claim_name():
     return reply == dbus.bus.REQUEST_NAME_REPLY_PRIMARY_OWNER
 
 
+QUELLEN = ("feedd.py", "config.py", "mastodon_api.py", "https_helper.py")
+
+
+def quellen_stand():
+    """Pruefsumme der eigenen Dateien -- die Kennung der laufenden Fassung.
+
+    Ueber den Inhalt, nicht ueber den Zeitstempel: mkdeb.py setzt im Paket
+    jede Datei auf mtime 0, damit die Pakete reproduzierbar sind. Nach der
+    Installation traegt also auch die neue Fassung den 1. Januar 1970, und ein
+    Vergleich der Zeitstempel saehe nie eine Aenderung. Die vier Dateien sind
+    zusammen 30 KB; einmal in der Minute kostet das nichts.
+    """
+    hier = os.path.dirname(os.path.abspath(__file__))
+    summe = hashlib.md5()
+    for name in QUELLEN:
+        try:
+            with open(os.path.join(hier, name), "rb") as fh:
+                summe.update(fh.read())
+        except (IOError, OSError):
+            summe.update(name)
+    return summe.hexdigest()
+
+
+STAND = quellen_stand()
+
+
+def abgeloest():
+    """True, wenn inzwischen eine neue Fassung installiert wurde.
+
+    Das postinst kann den laufenden Dienst nicht zuverlaessig beenden: unter
+    aegis darf das Installationsskript den fremden Prozess nicht abschiessen
+    (der Aufruf geht still daneben). Und der Upstart-Job startet feedd.py ja
+    nicht selbst, er sieht nur nach, ob jemand den Bus-Namen haelt -- der alte
+    Prozess haelt ihn weiter und liefe mit dem alten Code bis zum naechsten
+    Neustart des Geraets. Also loest sich der Dienst selbst ab: er beendet
+    sich, gibt den Namen frei, und der Job aktiviert binnen fuenf Minuten die
+    neue Fassung.
+    """
+    return quellen_stand() != STAND
+
+
+def warten(sekunden):
+    """Schlafen, aber jede Minute nachsehen, ob der Schalter umgelegt wurde.
+
+    Das Abfrageintervall sind 600 s. Wer den Feed abschaltet, tut das genau
+    dann, wenn er nichts mehr geladen haben will -- und nicht erst in zehn
+    Minuten. Die Rueckgabe sagt, ob weitergeschlafen werden soll.
+    """
+    rest = sekunden
+    while rest > 0:
+        time.sleep(min(60, rest))
+        rest -= 60
+        if not config.load().get("enabled", True):
+            return
+        if abgeloest():
+            return
+
+
 def main():
     open_log()
     try:
@@ -326,8 +440,26 @@ def main():
     print "mastodon-feed: gestartet %s als uid %d" % (
         time.strftime("%Y-%m-%d %H:%M:%S"), os.getuid())
     sys.stdout.flush()
+    gesagt = None                 # welcher Zustand zuletzt im Log steht
     while True:
+        if abgeloest():
+            print "mastodon-feed: neue Fassung installiert, dieser Dienst endet"
+            sys.stdout.flush()
+            return
         cfg = config.load()
+        if not cfg.get("enabled", True):
+            # Der Hauptschalter aus der Einstellungsseite. Nur beim Wechsel
+            # ins Log, sonst waere das Log nach einer Nacht voll davon.
+            if gesagt != "aus":
+                print "mastodon-feed: abgeschaltet, es wird nichts geholt"
+                sys.stdout.flush()
+                gesagt = "aus"
+            time.sleep(60)
+            continue
+        if gesagt == "aus":
+            print "mastodon-feed: wieder eingeschaltet"
+            sys.stdout.flush()
+        gesagt = "an"
         if not cfg["instance"] or not cfg["token"]:
             # Not set up yet. Sleep rather than exit: the settings page may
             # fill this in at any moment and respawning a dead job is noisier.
@@ -339,12 +471,17 @@ def main():
             continue
         try:
             cfg = poll_once(cfg, feed())
-            config.save(cfg)
+            # Nur die beiden Marken zurueckschreiben, nicht die ganze Kopie:
+            # ein Abruf dauert auf 2G Minuten, und in dieser Zeit kann die
+            # Einstellungsseite laengst einen Schalter umgelegt haben. Die
+            # ganze Kopie zu speichern haette ihn wieder zurueckgestellt.
+            config.update(last_home=cfg.get("last_home", ""),
+                          last_notification=cfg.get("last_notification", ""))
         except api.MastodonError, e:
             print "mastodon:", e
         except Exception, e:
             print "feed:", e
-        time.sleep(max(120, int(cfg.get("interval", 600))))
+        warten(max(120, int(cfg.get("interval", 600))))
 
 
 if __name__ == "__main__":

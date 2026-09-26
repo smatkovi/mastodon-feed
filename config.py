@@ -34,6 +34,10 @@ DEFAULTS = {
     "instance": "",
     "account": "",
     "token": "",
+    # Der Hauptschalter: aus heisst, der Dienst holt gar nichts mehr. Er
+    # laeuft weiter und sieht jede Minute nach, damit ein Einschalten in der
+    # Einstellungsseite ohne Neustart wirkt.
+    "enabled": True,
     "home": True,          # the home timeline in the feed
     "mentions": True,      # and notifications addressed to you
     "interval": 600,       # seconds between polls; the N950 is on 3G
@@ -65,6 +69,21 @@ def save(data):
         json.dump(data, fh, indent=2, sort_keys=True)
     os.chmod(tmp, 0600)
     os.rename(tmp, PATH)
+
+
+def update(**changes):
+    """Aendert einzelne Schluessel: frisch laden, setzen, schreiben.
+
+    Wichtig, weil zwei Prozesse in dieselbe Datei schreiben. Der Dienst haelt
+    seine Kopie waehrend eines Abrufs minutenlang in der Hand; wer in dieser
+    Zeit aus der Einstellungsseite die ganze Kopie zurueckschreibt, macht die
+    frisch vorgerueckten Marken wieder zunichte -- und umgekehrt haette der
+    Dienst einen gerade umgelegten Schalter wieder umgelegt.
+    """
+    data = load()
+    data.update(changes)
+    save(data)
+    return data
 
 
 def clear():
