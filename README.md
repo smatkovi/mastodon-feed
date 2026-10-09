@@ -70,11 +70,41 @@ which proves the session bus and the item dictionary.
 
 ## Tapping an item opens its link
 
-A feed item's `action` field is an address: MeeGo Touch Home hands it to
-`ContentAction::Action::defaultActionForScheme` when the item is tapped, and
+The address goes into the item's **`url`** field, not into `action`. Both keys
+exist and they are not the same thing. Nokia's own documentation of
+`MEventFeed::addItem(…, bool video, const QUrl &url, …)` says of that eighth
+parameter: *"the url to be executed when item is clicked. Executed action for
+URL is the default action provided by libcontentaction for the URL's scheme"* —
+which is what the `ContentAction::Action::defaultActionForScheme` and
+`::trigger` symbols in the `meegotouchhome` binary are for, and
 `browser.desktop` has registered itself for `x-maemo-urischeme/http` and
-`…/https`. So putting the post's link there is all it takes — no service of
-our own, no desktop file.
+`…/https`. `action` instead holds a D-Bus call, written as
+`service path interface method [arguments]` with the arguments as base64
+QVariant streams (`MRemoteAction::toString()`); that is how the built-in
+Twitter feed put its `showItem` call in there. Thomas Perl's Python bridge,
+the one `statusnet-meego` wrote into this same feed with, has both: `set_url()`
+sets `args["url"]`, while a callback sets
+`data["action"] = " ".join([service, path, interface, method, …])`.
+
+Up to 2.0 the link went into `action`. It was read as a call, failed
+silently, and tapping an item did nothing at all — no browser, no error
+anywhere. Nothing else about the link was wrong, which is why the detection
+tests all passed.
+
+Measured on the N950 on 09.10.2026, not reasoned about: the `events` table has
+`id, title, body, timestamp, footer, action, url, sourceName,
+sourceDisplayName` — both columns. Two probe items with the same shape, one
+address in `url`, one in `action`: tapping the first opens the browser on
+`example.org`, tapping the second only highlights the item and nothing else
+happens. An item written by the 2.1 daemon itself
+(`mastodon-feedd --eintrag`) lands with `url` set and `action` empty, and
+opens the browser as well; the items from 2.0 all have `url` NULL and the link
+sitting in `action`.
+
+`tools/feed-probe.py` is what settles such a question on the device: it prints
+the columns of the `events` table and can put one address in `url` and the
+same address in `action`, each in its own item. Tap them, and the device
+answers.
 
 Which link: Mastodon's own preview card if the post has one (`card.url`,
 that is the instance saying "this post points at something"), otherwise the
@@ -84,7 +114,7 @@ and they only lead to a profile or a tag page that this browser cannot render
 anyway. `&amp;` in the href is translated back, or the query string arrives
 broken. A boost uses the boosted post's link, the one whose text is shown.
 
-A post without a link leaves `action` empty, and then the item does not react
+A post without a link leaves `url` empty, and then the item does not react
 to a tap — same as before. The post's own permalink would be the obvious
 fallback, but a Mastodon status page is not something the 2011 browser makes
 a good job of.
@@ -196,7 +226,7 @@ not permitted"), while the same `kill` over `sudo` goes through.
 
 Developer mode, then in a terminal or over SSH:
 
-    devel-su dpkg -i mastodon-feed_2.0_armel.deb
+    devel-su dpkg -i mastodon-feed_2.1_armel.deb
 
 Then open **Mastodon Feed** from the launcher, give it the instance and the
 credentials, and the posts appear in the Events view. The token is stored

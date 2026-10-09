@@ -31,6 +31,10 @@ for f in mastodon_api.py https_helper.py config.py mastodon-feed; do
     cp "$f" "$STAGE/opt/mastodon-feed/$f"
 done
 chmod 755 "$STAGE/opt/mastodon-feed/mastodon-feed"
+# Die Probe fuers Tippen kommt mit: auf dem Geraet liegt kein Quellbaum, und
+# genau dort muss die Frage beantwortet werden (siehe README).
+cp tools/feed-probe.py "$STAGE/opt/mastodon-feed/feed-probe.py"
+chmod 755 "$STAGE/opt/mastodon-feed/feed-probe.py"
 cp qml/main.qml "$STAGE/opt/mastodon-feed/qml/main.qml"
 cp mastodon-feed.desktop "$STAGE/usr/share/applications/"
 cp org.smatkovi.MastodonFeed.service "$STAGE/usr/share/dbus-1/services/"

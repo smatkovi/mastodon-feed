@@ -255,11 +255,19 @@ async fn abrufen(
         let beitraege = klient.zeitleiste(&host, &token, &marke_startseite).await?;
         for status in beitraege.iter().rev() {
             let eintrag = eintrag_bauen(status, ANZEIGE, &mut budget, cfg).await;
-            if let Err(e) = ansicht.eintragen(&eintrag, QUELLE, ANZEIGE).await {
+            match ansicht.eintragen(&eintrag, QUELLE, ANZEIGE).await {
                 // Lieber ein Beitrag weniger als der ganze Durchlauf: haengt
                 // der Durchlauf, rueckt die Marke nicht vor und der naechste
                 // Abruf stolpert ueber genau denselben Beitrag.
-                melden(&format!("Beitrag ausgelassen ({}): {}", kennung(status), kette(e.as_ref())));
+                Err(e) => melden(&format!(
+                    "Beitrag ausgelassen ({}): {}", kennung(status), kette(e.as_ref()))),
+                // -1 ist kein Fehler auf dem Bus, sondern die Antwort der
+                // Ereignisansicht: sie hat den Eintrag verworfen und sagt
+                // nicht warum. Ohne diese Zeile verschwindet ein Beitrag
+                // spurlos.
+                Ok(k) if k < 0 => melden(&format!(
+                    "Beitrag verworfen ({}): addItem -> -1", kennung(status))),
+                Ok(_) => {}
             }
         }
         if let Some(erster) = beitraege.first() {
@@ -281,8 +289,12 @@ async fn abrufen(
                 andere => andere,
             };
             let eintrag = eintrag_bauen(status, art, &mut budget, cfg).await;
-            if let Err(e) = ansicht.eintragen(&eintrag, QUELLE, ANZEIGE).await {
-                melden(&format!("Beitrag ausgelassen ({}): {}", kennung(status), kette(e.as_ref())));
+            match ansicht.eintragen(&eintrag, QUELLE, ANZEIGE).await {
+                Err(e) => melden(&format!(
+                    "Beitrag ausgelassen ({}): {}", kennung(status), kette(e.as_ref()))),
+                Ok(k) if k < 0 => melden(&format!(
+                    "Beitrag verworfen ({}): addItem -> -1", kennung(status))),
+                Ok(_) => {}
             }
         }
         if let Some(erste) = meldungen.first() {

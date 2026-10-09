@@ -5,7 +5,34 @@
 //! im Feed, nirgends eine Fehlermeldung. Der vollstaendige Satz unten ist
 //! deshalb keine Zierde, und die Typen sind genau die der Python-Fassung:
 //! der Zeitstempel als Zeichenkette, `video` als Wahrheitswert, `imageList`
-//! als Feld von Zeichenketten.
+//! als Feld von Zeichenketten. (Pflicht sind laut Dokumentation nur `icon`,
+//! `title`, `timestamp`, `sourceName` und `sourceDisplayName` -- der ganze
+//! Satz schadet aber nicht und hat sich hier bewaehrt.)
+//!
+//! **"url" ist die Adresse, "action" ein D-Bus-Aufruf.** Beide Schluessel
+//! gibt es, und sie sind nicht dasselbe. Die Nokia-Dokumentation zu
+//! `MEventFeed::addItem(..., bool video, const QUrl &url, ...)` sagt zum
+//! achten Parameter: "the url to be executed when item is clicked. Executed
+//! action for URL is the default action provided by libcontentaction for the
+//! URL's scheme" -- dazu passen die Symbole
+//! `ContentAction::Action::defaultActionForScheme` und `::trigger` im
+//! `meegotouchhome`-Binary. In `action` steht dagegen eine Zeichenkette der
+//! Form `dienst pfad schnittstelle methode [argumente]`, die Argumente als
+//! base64-kodierte QVariant-Stroeme (`MRemoteAction::toString()`); so traegt
+//! der eingebaute Twitter-Feed seinen `showItem`-Aufruf ein. Nachzulesen an
+//! der Python-Bruecke von Thomas Perl, mit der `statusnet-meego` in denselben
+//! Feed schrieb: `set_url()` setzt `args["url"]`, ein Rueckruf dagegen
+//! `data["action"] = " ".join([dienst, pfad, schnittstelle, methode, ...])`.
+//!
+//! Bis 2.0 stand die Adresse in `action`. Sie wurde als Aufruf gelesen,
+//! scheiterte still, und das Tippen blieb wirkungslos -- kein Browser, keine
+//! Meldung. Am Link selbst war nichts falsch; deshalb gingen alle Proben zur
+//! Linkerkennung durch.
+//!
+//! Am 09.10.2026 auf dem N950 nachgemessen (`tools/feed-probe.py`): die
+//! Tabelle `events` fuehrt beide Spalten, zwei gleich gebaute Eintraege mit
+//! der Adresse einmal in `url` und einmal in `action` -- der erste oeffnet
+//! beim Tippen den Browser, der zweite leuchtet nur auf.
 
 use std::collections::HashMap;
 use zbus::zvariant::Value as DV;
@@ -108,7 +135,9 @@ impl<'a> Ereignisansicht<'a> {
         d.insert("timestamp", DV::from(e.zeitstempel.as_str()));
         d.insert("footer", DV::from(e.fusszeile.as_str()));
         d.insert("video", DV::from(e.video));
-        d.insert("action", DV::from(e.ziel.as_str()));
+        // Die Adresse gehoert in "url", nicht in "action": siehe oben.
+        d.insert("url", DV::from(e.ziel.as_str()));
+        d.insert("action", DV::from(""));
         d.insert("sourceName", DV::from(quelle));
         d.insert("sourceDisplayName", DV::from(anzeige));
         let kennung: i64 = self.proxy.call("addItem", &(d,)).await?;
